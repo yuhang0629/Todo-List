@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Calendar, Clock, Pause, Check, X, ChevronDown, ChevronRight, ArrowRight, Pin, PinOff, Palette, AlertTriangle, CalendarDays } from 'lucide-react';
+import { Plus, Calendar, Clock, Pause, Check, X, ChevronDown, ChevronRight, ArrowRight, Pin, PinOff, Palette, AlertTriangle, CalendarDays, Zap, Target, Flag } from 'lucide-react';
 import { storage } from './src/storage.js';
 
 const TodoManager = () => {
@@ -10,11 +10,15 @@ const TodoManager = () => {
   const [isMinimized, setIsMinimized] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [editingComment, setEditingComment] = useState('');
+  const [editingDeadline, setEditingDeadline] = useState(null);
+  const [newDeadline, setNewDeadline] = useState('');
   const [expandedTasks, setExpandedTasks] = useState(new Set());
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [theme, setTheme] = useState('green');
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [newTaskDeadline, setNewTaskDeadline] = useState(new Date().toISOString().split('T')[0]);
+  const [newTaskPriority, setNewTaskPriority] = useState('green');
+  const [completingTasks, setCompletingTasks] = useState(new Set());
 
   // Close theme picker when clicking outside
   useEffect(() => {
@@ -27,6 +31,31 @@ const TodoManager = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showThemePicker]);
+
+  // Keyboard shortcuts for priority setting
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.metaKey || event.ctrlKey) {
+        switch (event.key) {
+          case '1':
+            event.preventDefault();
+            setNewTaskPriority('red');
+            break;
+          case '2':
+            event.preventDefault();
+            setNewTaskPriority('orange');
+            break;
+          case '3':
+            event.preventDefault();
+            setNewTaskPriority('green');
+            break;
+        }
+      }
+    };
+    
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Theme configurations
   const themes = useMemo(() => ({
@@ -65,6 +94,42 @@ const TodoManager = () => {
       focus: 'focus:ring-gray-500',
       border: 'focus:border-gray-500 hover:border-gray-300',
       badge: 'bg-gray-100 text-gray-800'
+    },
+    sunset: {
+      header: 'bg-gradient-to-r from-orange-400 via-pink-500 to-purple-600',
+      headerHover: 'hover:bg-orange-400',
+      accent: 'text-orange-600',
+      button: 'bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600',
+      focus: 'focus:ring-orange-500',
+      border: 'focus:border-orange-500 hover:border-orange-300',
+      badge: 'bg-gradient-to-r from-orange-100 to-pink-100 text-orange-700'
+    },
+    ocean: {
+      header: 'bg-gradient-to-r from-blue-400 via-cyan-500 to-teal-500',
+      headerHover: 'hover:bg-cyan-400',
+      accent: 'text-cyan-600',
+      button: 'bg-gradient-to-r from-blue-500 to-teal-500 hover:from-blue-600 hover:to-teal-600',
+      focus: 'focus:ring-cyan-500',
+      border: 'focus:border-cyan-500 hover:border-cyan-300',
+      badge: 'bg-gradient-to-r from-blue-100 to-teal-100 text-cyan-700'
+    },
+    aurora: {
+      header: 'bg-gradient-to-r from-green-400 via-blue-500 to-purple-600',
+      headerHover: 'hover:bg-blue-400',
+      accent: 'text-blue-600',
+      button: 'bg-gradient-to-r from-green-500 to-purple-500 hover:from-green-600 hover:to-purple-600',
+      focus: 'focus:ring-blue-500',
+      border: 'focus:border-blue-500 hover:border-blue-300',
+      badge: 'bg-gradient-to-r from-green-100 to-purple-100 text-blue-700'
+    },
+    fire: {
+      header: 'bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500',
+      headerHover: 'hover:bg-orange-400',
+      accent: 'text-red-600',
+      button: 'bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600',
+      focus: 'focus:ring-red-500',
+      border: 'focus:border-red-500 hover:border-red-300',
+      badge: 'bg-gradient-to-r from-red-100 to-orange-100 text-red-700'
     }
   }), []);
 
@@ -76,12 +141,58 @@ const TodoManager = () => {
     const loadTasks = async () => {
       const loadedTasks = await storage.loadTodos();
       if (isMounted) {
-        setTasks(loadedTasks);
+        // Auto-escalate priorities based on deadlines
+        const escalatedTasks = escalatePriorities(loadedTasks);
+        setTasks(escalatedTasks);
       }
     };
     loadTasks();
     return () => { isMounted = false; };
   }, []);
+
+  // Auto-escalate priorities based on deadlines
+  const escalatePriorities = (tasks) => {
+    const today = new Date().toISOString().split('T')[0];
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+    const escalatedTasks = { ...tasks };
+    let hasChanges = false;
+
+    Object.keys(escalatedTasks).forEach(date => {
+      Object.keys(escalatedTasks[date]).forEach(taskId => {
+        const task = escalatedTasks[date][taskId];
+        if (task.status === 'DONE') return;
+
+        const deadline = task.deadline || task.createdAt;
+        const deadlineDate = deadline.split('T')[0];
+        
+        // Auto-escalate based on deadline proximity
+        if (deadlineDate === today && task.priority === 'orange') {
+          // Orange becomes red on deadline day
+          escalatedTasks[date][taskId].priority = 'red';
+          hasChanges = true;
+        } else if (deadlineDate === tomorrowStr && task.priority === 'green') {
+          // Green becomes orange one day before deadline
+          escalatedTasks[date][taskId].priority = 'orange';
+          hasChanges = true;
+        }
+      });
+    });
+
+    return escalatedTasks;
+  };
+
+  // Check for priority escalations daily
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTasks(prev => escalatePriorities(prev));
+    }, 60000 * 60); // Check every hour
+    
+    return () => clearInterval(interval);
+  }, []);
+
 
   // Debounced save to prevent excessive file writes
   useEffect(() => {
@@ -93,6 +204,7 @@ const TodoManager = () => {
     
     return () => clearTimeout(timeoutId);
   }, [tasks]);
+
 
   const today = new Date().toISOString().split('T')[0];
   const todayFormatted = new Date().toLocaleDateString('en-US', {
@@ -122,6 +234,7 @@ const TodoManager = () => {
           status: 'TODO',
           comment: '',
           deadline: newTaskDeadline,
+          priority: newTaskPriority,
           createdAt: new Date().toISOString()
         }
       }
@@ -129,9 +242,28 @@ const TodoManager = () => {
 
     setNewTask('');
     setNewTaskDeadline(new Date().toISOString().split('T')[0]);
+    setNewTaskPriority('green');
   };
 
   const updateTaskStatus = (date, taskId, newStatus) => {
+    const task = tasks[date][taskId];
+    const wasCompleted = task.status === 'DONE';
+    const isCompleting = newStatus === 'DONE' && !wasCompleted;
+    
+    if (isCompleting) {
+      // Trigger completion animation
+      setCompletingTasks(prev => new Set(prev).add(taskId));
+      
+      // Remove animation after delay
+      setTimeout(() => {
+        setCompletingTasks(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(taskId);
+          return newSet;
+        });
+      }, 1000);
+    }
+    
     setTasks(prev => ({
       ...prev,
       [date]: {
@@ -139,6 +271,20 @@ const TodoManager = () => {
         [taskId]: {
           ...prev[date][taskId],
           status: newStatus
+        }
+      }
+    }));
+  };
+
+
+  const updateTaskPriority = (date, taskId, priority) => {
+    setTasks(prev => ({
+      ...prev,
+      [date]: {
+        ...prev[date],
+        [taskId]: {
+          ...prev[date][taskId],
+          priority: priority
         }
       }
     }));
@@ -152,6 +298,19 @@ const TodoManager = () => {
         [taskId]: {
           ...prev[date][taskId],
           comment: comment
+        }
+      }
+    }));
+  };
+
+  const updateTaskDeadline = (date, taskId, deadline) => {
+    setTasks(prev => ({
+      ...prev,
+      [date]: {
+        ...prev[date],
+        [taskId]: {
+          ...prev[date][taskId],
+          deadline: deadline
         }
       }
     }));
@@ -217,15 +376,23 @@ const TodoManager = () => {
 
   const handleMinimize = useCallback(() => {
     setIsMinimized(true);
+    // Temporarily disable always-on-top when minimizing to prevent gesture interference
+    if (alwaysOnTop) {
+      storage.setAlwaysOnTop(false);
+    }
     // Don't await - make it non-blocking for faster UI response
     storage.resizeWindow(140, 40);
-  }, []);
+  }, [alwaysOnTop]);
 
   const handleExpand = useCallback(() => {
     setIsMinimized(false);
+    // Restore always-on-top setting when expanding
+    if (alwaysOnTop) {
+      storage.setAlwaysOnTop(true);
+    }
     // Don't await - make it non-blocking for faster UI response
     storage.resizeWindow(500, 700);
-  }, []);
+  }, [alwaysOnTop]);
 
   const toggleAlwaysOnTop = useCallback(() => {
     const newValue = !alwaysOnTop;
@@ -251,6 +418,42 @@ const TodoManager = () => {
       case 'ON_HOLD': return <Pause className="w-3 h-3" />;
       case 'DONE': return <Check className="w-3 h-3" />;
       default: return <Calendar className="w-3 h-3" />;
+    }
+  };
+
+  const getPriorityColor = (priority) => {
+    switch (priority) {
+      case 'red': return 'border-red-500 bg-red-50';
+      case 'orange': return 'border-orange-500 bg-orange-50';
+      case 'green': return 'border-green-500 bg-green-50';
+      default: return 'border-gray-300 bg-gray-50';
+    }
+  };
+
+  const getPriorityBorderColor = (priority) => {
+    switch (priority) {
+      case 'red': return 'border-l-red-500';
+      case 'orange': return 'border-l-orange-500';
+      case 'green': return 'border-l-green-500';
+      default: return 'border-l-gray-300';
+    }
+  };
+
+  const getPriorityIcon = (priority) => {
+    switch (priority) {
+      case 'red': return <Zap className="w-3 h-3 text-red-500" />;
+      case 'orange': return <Target className="w-3 h-3 text-orange-500" />;
+      case 'green': return <Flag className="w-3 h-3 text-green-500" />;
+      default: return <Flag className="w-3 h-3 text-gray-500" />;
+    }
+  };
+
+  const getPriorityLabel = (priority) => {
+    switch (priority) {
+      case 'red': return 'Urgent';
+      case 'orange': return 'Important';
+      case 'green': return 'Low Priority';
+      default: return 'Normal';
     }
   };
 
@@ -329,9 +532,15 @@ const TodoManager = () => {
 
   if (isMinimized) {
     return (
-      <div className={`${currentTheme.header} text-white cursor-pointer hover:shadow-xl transition-all hover:scale-105 flex items-center justify-center h-screen w-screen`}
-           onClick={handleExpand}>
-        <div className="flex items-center gap-2">
+      <div 
+        className={`${currentTheme.header} text-white hover:shadow-xl transition-all flex items-center justify-center h-screen w-screen`}
+        style={{WebkitAppRegion: 'drag'}}
+      >
+        <div 
+          className="flex items-center gap-2 cursor-pointer hover:scale-105 transition-all px-2 py-1 rounded"
+          onClick={handleExpand}
+          style={{WebkitAppRegion: 'no-drag'}}
+        >
           <Calendar className="w-4 h-4" />
           <span className="font-medium text-sm">Todo</span>
           {todayTaskCount > 0 && (
@@ -350,7 +559,7 @@ const TodoManager = () => {
   }
 
   return (
-    <div className="w-screen h-screen bg-white overflow-hidden flex flex-col">
+    <div className="w-screen h-screen bg-white overflow-hidden flex flex-col relative">
       {/* Header */}
       <div className={`${currentTheme.header} text-white p-4`} style={{WebkitAppRegion: 'drag'}}>
         <div className="flex items-center justify-between">
@@ -369,7 +578,7 @@ const TodoManager = () => {
               </button>
               {showThemePicker && (
                 <div className="absolute top-8 right-0 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50">
-                  <div className="flex flex-col gap-1 w-24">
+                  <div className="grid grid-cols-2 gap-1 w-48">
                     <button
                       onClick={() => {
                         setTheme('green');
@@ -406,6 +615,42 @@ const TodoManager = () => {
                     >
                       Dark
                     </button>
+                    <button
+                      onClick={() => {
+                        setTheme('sunset');
+                        setShowThemePicker(false);
+                      }}
+                      className={`w-full h-8 rounded-lg bg-gradient-to-r from-orange-400 via-pink-500 to-purple-600 border-2 ${theme === 'sunset' ? 'border-orange-600' : 'border-gray-300'} hover:border-orange-500 transition-colors flex items-center justify-center text-white text-xs font-medium`}
+                    >
+                      Sunset
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTheme('ocean');
+                        setShowThemePicker(false);
+                      }}
+                      className={`w-full h-8 rounded-lg bg-gradient-to-r from-blue-400 via-cyan-500 to-teal-500 border-2 ${theme === 'ocean' ? 'border-cyan-600' : 'border-gray-300'} hover:border-cyan-500 transition-colors flex items-center justify-center text-white text-xs font-medium`}
+                    >
+                      Ocean
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTheme('aurora');
+                        setShowThemePicker(false);
+                      }}
+                      className={`w-full h-8 rounded-lg bg-gradient-to-r from-green-400 via-blue-500 to-purple-600 border-2 ${theme === 'aurora' ? 'border-blue-600' : 'border-gray-300'} hover:border-blue-500 transition-colors flex items-center justify-center text-white text-xs font-medium`}
+                    >
+                      Aurora
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTheme('fire');
+                        setShowThemePicker(false);
+                      }}
+                      className={`w-full h-8 rounded-lg bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500 border-2 ${theme === 'fire' ? 'border-red-600' : 'border-gray-300'} hover:border-red-500 transition-colors flex items-center justify-center text-white text-xs font-medium`}
+                    >
+                      Fire
+                    </button>
                   </div>
                 </div>
               )}
@@ -431,7 +676,7 @@ const TodoManager = () => {
 
       {/* Add Task */}
       <div className="p-4 border-b border-gray-100 flex-shrink-0">
-        <div className="flex gap-3">
+        <div className="flex gap-3 mb-3">
           <div className="flex-1">
             <input
               type="text"
@@ -451,6 +696,31 @@ const TodoManager = () => {
               className={`px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none ${currentTheme.focus} transition-colors`}
             />
           </div>
+        </div>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <div className="text-xs text-gray-600 mb-1">Priority</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setNewTaskPriority('red')}
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${newTaskPriority === 'red' ? 'bg-red-100 border-2 border-red-500 text-red-700' : 'bg-gray-100 border border-gray-300 text-gray-600 hover:bg-red-50'}`}
+              >
+                🔴 Urgent
+              </button>
+              <button
+                onClick={() => setNewTaskPriority('orange')}
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${newTaskPriority === 'orange' ? 'bg-orange-100 border-2 border-orange-500 text-orange-700' : 'bg-gray-100 border border-gray-300 text-gray-600 hover:bg-orange-50'}`}
+              >
+                🟠 Important
+              </button>
+              <button
+                onClick={() => setNewTaskPriority('green')}
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${newTaskPriority === 'green' ? 'bg-green-100 border-2 border-green-500 text-green-700' : 'bg-gray-100 border border-gray-300 text-gray-600 hover:bg-green-50'}`}
+              >
+                🟢 Low Priority
+              </button>
+            </div>
+          </div>
           <button
             onClick={addTask}
             disabled={!newTask.trim()}
@@ -458,7 +728,7 @@ const TodoManager = () => {
               newTask.trim() 
                 ? currentTheme.button 
                 : 'bg-gray-400 cursor-not-allowed'
-            } text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2`}
+            } text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 self-end`}
           >
             <Plus className="w-4 h-4" />
             <span className="text-sm font-medium">Add</span>
@@ -510,13 +780,37 @@ const TodoManager = () => {
                 {/* Tasks */}
                 {isExpanded && (
                   <div className="pb-2">
-                    {Object.values(dateTasks).map(task => {
+                    {Object.values(dateTasks)
+                      .sort((a, b) => {
+                        // Sort by priority first (red=3, orange=2, green=1)
+                        const priorityOrder = { red: 3, orange: 2, green: 1 };
+                        const aPriority = priorityOrder[a.priority || 'green'];
+                        const bPriority = priorityOrder[b.priority || 'green'];
+                        
+                        if (aPriority !== bPriority) {
+                          return bPriority - aPriority; // Higher priority first
+                        }
+                        
+                        // Then sort by deadline (earlier deadlines first)
+                        const aDeadline = new Date(a.deadline || a.createdAt);
+                        const bDeadline = new Date(b.deadline || b.createdAt);
+                        
+                        return aDeadline - bDeadline;
+                      })
+                      .map(task => {
                       const isTaskExpanded = expandedTasks.has(task.id);
+                      const isCompleting = completingTasks.has(task.id);
                       return (
-                        <div key={task.id} className={`mx-3 mb-3 p-4 ${isTaskOverdue(task) ? 'bg-red-50 border-l-4 border-red-400' : 'bg-white'} rounded-lg border border-gray-200 hover:shadow-md transition-all`}>
+                        <div key={task.id} className={`mx-3 mb-3 p-4 ${isTaskOverdue(task) ? 'bg-red-50 border-l-4 border-red-400' : `bg-white border-l-4 ${getPriorityBorderColor(task.priority || 'green')}`} rounded-lg border border-gray-200 hover:shadow-md transition-all hover:border-l-8 ${isCompleting ? 'animate-pulse bg-gradient-to-r from-green-100 to-blue-100 scale-105 shadow-xl' : ''}`}>
                           <div className="flex items-start justify-between">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-3 mb-2">
+                                <span className={`px-2 py-1 rounded-md text-xs font-medium border ${getPriorityColor(task.priority || 'green')} flex-shrink-0`}>
+                                  <div className="flex items-center gap-1">
+                                    {getPriorityIcon(task.priority || 'green')}
+                                    {getPriorityLabel(task.priority || 'green')}
+                                  </div>
+                                </span>
                                 <span className={`px-2 py-1 rounded-md text-xs font-medium border ${getStatusColor(task.status)} flex-shrink-0`}>
                                   <div className="flex items-center gap-1">
                                     {getStatusIcon(task.status)}
@@ -597,8 +891,8 @@ const TodoManager = () => {
                                       value={editingComment}
                                       onChange={(e) => setEditingComment(e.target.value)}
                                       placeholder="Add a note or comment..."
-                                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
-                                      rows="2"
+                                      className="w-full px-3 py-3 text-sm border border-gray-300 rounded-lg resize-y focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white min-h-[80px]"
+                                      rows="4"
                                       autoFocus
                                     />
                                   </div>
@@ -647,21 +941,89 @@ const TodoManager = () => {
                                 </button>
                               )}
 
-                              {/* Status Buttons */}
-                              <div className="flex gap-1">
-                                {['TODO', 'IN_PROGRESS', 'ON_HOLD', 'DONE'].map(status => (
-                                  <button
-                                    key={status}
-                                    onClick={() => updateTaskStatus(date, task.id, status)}
-                                    className={`px-2 py-1 rounded text-xs transition-colors ${
-                                      task.status === status
-                                        ? getStatusColor(status)
-                                        : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                                    }`}
+                              {/* Deadline Section */}
+                              <div className="mb-3">
+                                <div className="text-xs text-gray-600 mb-2">Deadline</div>
+                                {editingDeadline === task.id ? (
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="date"
+                                      value={newDeadline}
+                                      onChange={(e) => setNewDeadline(e.target.value)}
+                                      className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
+                                    />
+                                    <button
+                                      onClick={() => {
+                                        updateTaskDeadline(date, task.id, newDeadline);
+                                        setEditingDeadline(null);
+                                        setNewDeadline('');
+                                      }}
+                                      className={`${currentTheme.button} text-white px-3 py-1.5 rounded-md text-xs font-medium transition-colors`}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setEditingDeadline(null);
+                                        setNewDeadline('');
+                                      }}
+                                      className="bg-gray-500 text-white px-3 py-1.5 rounded-md text-xs font-medium hover:bg-gray-600 transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div 
+                                    className="text-sm bg-gray-50 px-3 py-2 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors border border-dashed border-gray-300"
+                                    onClick={() => {
+                                      setEditingDeadline(task.id);
+                                      setNewDeadline((task.deadline || task.createdAt).split('T')[0]);
+                                    }}
                                   >
-                                    {status.replace('_', ' ')}
-                                  </button>
-                                ))}
+                                    📅 {formatDeadline(task)} (click to edit)
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Priority Buttons */}
+                              <div className="mb-3">
+                                <div className="text-xs text-gray-600 mb-2">Priority</div>
+                                <div className="flex gap-1">
+                                  {[{key: 'red', label: '🔴 Urgent'}, {key: 'orange', label: '🟠 Important'}, {key: 'green', label: '🟢 Low Priority'}].map(priority => (
+                                    <button
+                                      key={priority.key}
+                                      onClick={() => updateTaskPriority(date, task.id, priority.key)}
+                                      className={`px-2 py-1 rounded text-xs transition-colors ${
+                                        (task.priority || 'green') === priority.key
+                                          ? getPriorityColor(priority.key)
+                                          : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                      }`}
+                                    >
+                                      {priority.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+
+                              {/* Status Buttons */}
+                              <div className="mb-3">
+                                <div className="text-xs text-gray-600 mb-2">Status</div>
+                                <div className="flex gap-1">
+                                  {['TODO', 'IN_PROGRESS', 'ON_HOLD', 'DONE'].map(status => (
+                                    <button
+                                      key={status}
+                                      onClick={() => updateTaskStatus(date, task.id, status)}
+                                      className={`px-2 py-1 rounded text-xs transition-colors ${
+                                        task.status === status
+                                          ? getStatusColor(status)
+                                          : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                      }`}
+                                    >
+                                      {status.replace('_', ' ')}
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
                             </div>
                           )}
